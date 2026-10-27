@@ -11,7 +11,10 @@ from tkinter import scrolledtext
 import threading
 import datetime
 
+from PySide6.QtWidgets import QApplication
+
 from brain import JarvisBrain
+from orb import JarvisOrb
 from speech_output import speak
 
 
@@ -31,8 +34,9 @@ MONO = "Cascadia Mono"
 
 
 class JarvisGUI:
-    def __init__(self, root):
+    def __init__(self, root, qt_app):
         self.root = root
+        self.qt_app = qt_app
         self.jarvis = JarvisBrain()
 
         self.closing = False
@@ -40,6 +44,15 @@ class JarvisGUI:
         self.mic_enabled = True
         self.voice_enabled = True
         self.speech_module = None
+        self.speaking = threading.Event()
+
+        # The orb and Tkinter UI share the main thread. Tk periodically pumps
+        # Qt events, avoiding a second GUI thread and keeping orb state updates safe.
+        self.orb = JarvisOrb()
+        self.orb.exit_requested.connect(self.close_app)
+        # Keep the visual hidden until the user starts a voice interaction.
+        self.orb.hide_session()
+        self.root.after(10, self._pump_qt_events)
 
         self.mode = tk.StringVar(value="Keyboard + Microphone")
 
@@ -456,6 +469,7 @@ class JarvisGUI:
             return
 
         self.set_busy("LISTENING")
+        self.orb.request_session("Listening… speak now")
         self.add_message(
             "SYSTEM",
             "Recording started. Speak when ready."
@@ -490,10 +504,15 @@ class JarvisGUI:
                     "SYSTEM", "No speech detected. Try again."
                 )
                 self.root.after(0, self.set_ready)
+                self.root.after(0, self.orb.request_overlay_text, "Didn't catch that. Try again.")
+                self.root.after(1600, self.orb.request_hide)
                 return
 
             command = command.strip()
             self.root.after(0, self.add_message, "YOU", command)
+            self.root.after(0, self.orb.request_overlay_text, f"You said: {command}")
+            self.root.after(0, self.set_busy, "PROCESSING")
+            self.root.after(0, self.orb.request_state, "Thinking")
             self.process_command(command)
 
         except Exception as error:
@@ -508,6 +527,10 @@ class JarvisGUI:
     def set_busy(self, message):
         self.busy = True
         self.status.configure(text=f"● {message}", fg=YELLOW)
+        if message.upper() == "LISTENING":
+            self.orb.request_state("Listening")
+        else:
+            self.orb.request_state("Thinking")
         self.apply_mode()
 
     def set_ready(self):
@@ -516,6 +539,10 @@ class JarvisGUI:
 
         self.busy = False
         self.status.configure(text="● ONLINE", fg=GREEN)
+        if self.speaking.is_set():
+            self.orb.request_state("Speaking")
+        else:
+            self.orb.request_hide()
         self.apply_mode()
 
     def process_command(self, command):
@@ -528,6 +555,8 @@ class JarvisGUI:
             self.root.after(
                 0, self.add_message, "JARVIS", response
             )
+            self.root.after(0, self.orb.request_overlay_text, response)
+            self.root.after(0, self.orb.request_state, "Thinking")
 
             self.speak_async(response)
 
@@ -556,10 +585,27 @@ class JarvisGUI:
         if not self.voice_enabled or self.closing:
             return
 
+        self.speaking.set()
+        self.orb.request_state("Speaking")
         try:
             speak(message)
         except Exception as error:
             print("Speech output error:", error)
+        finally:
+            self.speaking.clear()
+            if not self.closing:
+                # If the AI worker has already finished, return to Idle now.
+                # Otherwise set_ready() will return the orb to Idle afterwards.
+                if not self.busy:
+                    self.orb.request_hide()
+
+    # ---------- QT EVENT PUMP ----------
+    def _pump_qt_events(self):
+        if self.closing:
+            return
+        self.qt_app.processEvents()
+        if not self.closing:
+            self.root.after(10, self._pump_qt_events)
 
     # ---------- CLOCK / SHUTDOWN ----------
     def update_clock(self):
@@ -573,12 +619,21 @@ class JarvisGUI:
         self.root.after(1000, self.update_clock)
 
     def close_app(self):
+        if self.closing:
+            return
         self.closing = True
         self.jarvis.running = False
-        self.root.destroy()
+        try:
+            self.orb.close()
+            self.qt_app.quit()
+        finally:
+            self.root.destroy()
 
 
 if __name__ == "__main__":
+    # Create Qt first because the orb is a Qt window. Tk remains the main UI loop;
+    # JarvisGUI pumps Qt events on the same thread for smooth orb animation.
+    qt_app = QApplication.instance() or QApplication([])
     root = tk.Tk()
-    app = JarvisGUI(root)
+    app = JarvisGUI(root, qt_app)
     root.mainloop()

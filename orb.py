@@ -15,7 +15,7 @@ from PySide6.QtGui import (
     QAction, QBrush, QColor, QConicalGradient, QFont,
     QPainter, QPen, QRadialGradient,
 )
-from PySide6.QtWidgets import QApplication, QMenu, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QMenu, QWidget
 
 
 # ---------- SETTINGS ----------
@@ -27,8 +27,8 @@ BOTTOM_MARGIN = 60                # distance above the bottom of the work area
 DEFAULT_ANCHOR = "bottom_right"   # or "bottom_centre"
 POSITION_FILE = Path(__file__).resolve().parent / "orb_settings.json"
 
-STATE_MOTION = {"Idle": 1.0, "Listening": 1.12, "Thinking": 1.06, "Speaking": 1.16}
-STATE_SPIN = {"Idle": 1.0, "Listening": 1.8, "Thinking": 3.0, "Speaking": 1.4}
+STATE_MOTION = {"Idle": 1.0, "Listening": 1.10, "Thinking": 1.04, "Speaking": 1.20}
+STATE_SPIN = {"Idle": 0.55, "Listening": 2.0, "Thinking": 3.8, "Speaking": 1.25}
 EASE = 0.08                       # how quickly size and spin move toward the target
 
 # Ring rotation in degrees per phase unit. Negative values turn the other way.
@@ -40,6 +40,11 @@ class JarvisOrb(QWidget):
 
     # Emitting this from any thread is safe; Qt delivers it on the GUI thread.
     state_requested = Signal(str)
+    overlay_text_requested = Signal(str)
+    session_requested = Signal(str)
+    hide_requested = Signal()
+    exit_requested = Signal()
+    exit_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -52,6 +57,26 @@ class JarvisOrb(QWidget):
             | Qt.WindowType.Tool          # no taskbar button
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        # Compact Siri-style status bubble, shown only during an interaction.
+        self.bubble = QLabel("", None, Qt.WindowType.Tool |
+                              Qt.WindowType.FramelessWindowHint |
+                              Qt.WindowType.WindowStaysOnTopHint)
+        self.bubble.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.bubble.setStyleSheet("""
+            QLabel {
+                background: rgba(12, 16, 28, 238);
+                color: #EAF8FF;
+                border: 1px solid #2B9FC4;
+                border-radius: 13px;
+                padding: 10px 15px;
+                font: 10pt "Segoe UI";
+            }
+        """)
+        self.bubble.setMinimumWidth(190)
+        self.bubble.setMaximumWidth(310)
+        self.bubble.setWordWrap(True)
+        self.bubble.hide()
 
         self.cx = self.cy = ORB_SIZE / 2
         self.state = "Idle"
@@ -82,6 +107,9 @@ class JarvisOrb(QWidget):
         self._label_font = QFont("Consolas", 8)
 
         self.state_requested.connect(self.set_state)
+        self.overlay_text_requested.connect(self.set_overlay_text)
+        self.session_requested.connect(self.show_session)
+        self.hide_requested.connect(self.hide_session)
 
         self._load_settings()
 
@@ -98,6 +126,46 @@ class JarvisOrb(QWidget):
     def set_state(self, state):
         if state in STATE_MOTION:
             self.state = state
+            self.update()
+
+    def request_session(self, message="Listening..."):
+        self.session_requested.emit(message)
+
+    def request_overlay_text(self, message):
+        self.overlay_text_requested.emit(str(message))
+
+    def request_hide(self):
+        self.hide_requested.emit()
+
+    def show_session(self, message="Listening..."):
+        """Show orb and text bubble for an active interaction."""
+        self.set_state("Listening")
+        self.set_overlay_text(message)
+        self.show()
+        self.raise_()
+        self.bubble.show()
+        self._position_bubble()
+
+    def set_overlay_text(self, message):
+        self.bubble.setText(str(message))
+        self.bubble.adjustSize()
+        self._position_bubble()
+
+    def hide_session(self):
+        """Return to the quiet background state."""
+        self.set_state("Idle")
+        self.bubble.hide()
+        self.hide()
+
+    def _position_bubble(self):
+        if not hasattr(self, "bubble"):
+            return
+        # Place the bubble above the orb and align their right edges.
+        self.bubble.adjustSize()
+        self.bubble.move(
+            self.x() + self.width() - self.bubble.width(),
+            max(0, self.y() - self.bubble.height() - 10),
+        )
 
     # ---------- GRADIENTS ----------
 
@@ -126,7 +194,9 @@ class JarvisOrb(QWidget):
         self.motion += (STATE_MOTION[self.state] - self.motion) * EASE
         self.spin += (STATE_SPIN[self.state] - self.spin) * EASE
         self.phase = (self.phase + 0.025 * self.spin) % math.tau
-        self.update()
+        if self.isVisible():
+            self._position_bubble()
+            self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -134,7 +204,15 @@ class JarvisOrb(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
 
         t = self.phase
-        radius = 53 * (1 + 0.025 * math.sin(t * 2)) * self.motion
+        if self.state == "Listening":
+            pulse = 0.065 * math.sin(t * 2.8)
+        elif self.state == "Thinking":
+            pulse = 0.035 * math.sin(t * 5.0) + 0.02 * math.sin(t * 2.1)
+        elif self.state == "Speaking":
+            pulse = 0.09 * math.sin(t * 3.4)
+        else:
+            pulse = 0.018 * math.sin(t * 1.4)
+        radius = 53 * (1 + pulse) * self.motion
 
         # Soft outer glow
         p.setBrush(QBrush(self._glow))
@@ -145,7 +223,9 @@ class JarvisOrb(QWidget):
         p.translate(self.cx, self.cy)
         for ring_radius, width, speed, gradient in self._rings:
             p.save()
-            p.rotate(math.degrees(t * speed))
+            state_speed = {"Idle": 0.45, "Listening": 1.35,
+                           "Thinking": 2.15, "Speaking": 0.82}[self.state]
+            p.rotate(math.degrees(t * speed * state_speed))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(QPen(QBrush(gradient), width))
             p.drawArc(
@@ -163,7 +243,15 @@ class JarvisOrb(QWidget):
             x = self.cx + math.cos(a) * distance
             y = self.cy + math.sin(a) * distance * 0.57
             alpha = int(100 + 130 * (0.5 + 0.5 * math.sin(a * 2 + t)))
-            p.setBrush(QColor(70, 205, 255, alpha))
+            if self.state == "Thinking":
+                particle_color = QColor(160, 85, 255, alpha)
+            elif self.state == "Speaking":
+                particle_color = QColor(70, 245, 255, alpha)
+            elif self.state == "Listening":
+                particle_color = QColor(70, 205, 255, alpha)
+            else:
+                particle_color = QColor(80, 150, 210, int(alpha * 0.62))
+            p.setBrush(particle_color)
             p.drawEllipse(int(x), int(y), max(1, int(size)), max(1, int(size)))
 
         # Event horizon: dark centre, bright thin rim
@@ -295,7 +383,7 @@ class JarvisOrb(QWidget):
         position_menu.addAction("Reset position").triggered.connect(self.reset_position)
 
         menu.addSeparator()
-        menu.addAction("Exit JARVIS Orb").triggered.connect(QApplication.quit)
+        menu.addAction("Exit JARVIS").triggered.connect(self.exit_requested.emit)
         menu.exec(position)
 
 

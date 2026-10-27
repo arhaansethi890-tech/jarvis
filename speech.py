@@ -1,4 +1,4 @@
-
+﻿
 import whisper
 import sounddevice as sd
 import numpy as np
@@ -23,7 +23,7 @@ def listen():
     samplerate=SAMPLE_RATE,
     channels=1,
     dtype="int16",
-    device=1
+    device=2
     )
     sd.wait()
     print("Recording complete.")
@@ -69,3 +69,4 @@ if __name__ == "__main__":
         except Exception as error:
             print(f"Speech recognition error: {error}")
             break
+
