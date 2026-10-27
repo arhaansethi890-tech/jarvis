@@ -1,16 +1,19 @@
-
 """
 JARVIS SAFEGUARDS
+
 Central policy for actions JARVIS may perform.
 
 Important:
-This module must be called by brain.py before an action happens.
-It does not independently sandbox Python or Windows.
+    This module must be called by brain.py before an action happens.
+    It does not independently sandbox Python or Windows.
+
+Every action name that brain.py passes to authorize() MUST appear in one of the
+sets below. Unknown names are blocked by default, so a missing entry silently
+disables the feature. test_safeguards.py checks this automatically.
 """
 
 from pathlib import Path
 from enum import Enum
-import os
 
 
 # ---------- CONFIGURATION ----------
@@ -29,13 +32,20 @@ WRITABLE_DIRS = [
 ]
 
 # These actions are permitted without asking each time.
+# NOTE: for these actions authorize() does not inspect `target`; brain.py is
+# responsible for validating targets (app whitelist, https-only URLs, etc.).
 ALWAYS_ALLOWED = {
     "answer_question",
     "tell_time",
     "tell_date",
     "calculate",
+    "convert_units",
+    "system_status",
+    "set_timer",
+    "cancel_timer",
+    "manage_notes",
     "open_approved_app",
-     "open_approved_folder",
+    "open_approved_folder",
     "open_approved_website",
     "search_web",
     "search_youtube",
@@ -76,19 +86,15 @@ def _inside_directory(path, allowed_dirs):
     """Return True only when the resolved path is inside an allowed folder."""
     try:
         resolved = Path(path).resolve()
-
         for directory in allowed_dirs:
             root = Path(directory).resolve()
-
             try:
                 resolved.relative_to(root)
                 return True
             except ValueError:
                 continue
-
     except (OSError, RuntimeError, ValueError):
         return False
-
     return False
 
 
@@ -96,10 +102,8 @@ def check_read_path(path):
     """Check whether a requested file is inside an approved read folder."""
     if not _inside_directory(path, READABLE_DIRS):
         return False, "This file is outside JARVIS's approved read folders."
-
     if not Path(path).is_file():
         return False, "The requested file does not exist or is not a file."
-
     return True, "Read path is within an approved folder."
 
 
@@ -107,7 +111,6 @@ def check_write_path(path):
     """Check whether a new or modified file is in an approved output folder."""
     if not _inside_directory(path, WRITABLE_DIRS):
         return False, "Writes are restricted to the approved output folder."
-
     return True, "Write path is within an approved folder."
 
 
@@ -129,7 +132,6 @@ def authorize(action, target=None, approved=False):
     if action == "read_file":
         if not target:
             return Decision.BLOCK, "A file path is required."
-
         allowed, reason = check_read_path(target)
         if not allowed:
             return Decision.BLOCK, reason
@@ -137,7 +139,6 @@ def authorize(action, target=None, approved=False):
     elif action in {"create_file", "modify_file"}:
         if not target:
             return Decision.BLOCK, "A file path is required."
-
         allowed, reason = check_write_path(target)
         if not allowed:
             return Decision.BLOCK, reason
@@ -149,7 +150,6 @@ def authorize(action, target=None, approved=False):
                 Decision.APPROVAL_REQUIRED,
                 "JARVIS code changes require your explicit approval."
             )
-
         return (
             Decision.BLOCK,
             "Direct self-modification is disabled. "
@@ -162,7 +162,6 @@ def authorize(action, target=None, approved=False):
                 Decision.APPROVAL_REQUIRED,
                 f"Your approval is required for: {action}"
             )
-
         return (
             Decision.BLOCK,
             "This action is not implemented as a safe operation yet."
@@ -194,6 +193,7 @@ def get_security_summary():
         "writable_directories": [
             str(path) for path in WRITABLE_DIRS
         ],
+        "always_allowed": sorted(ALWAYS_ALLOWED),
         "approval_required": sorted(REQUIRES_APPROVAL),
         "blocked_actions": sorted(ALWAYS_BLOCKED),
     }
