@@ -44,7 +44,6 @@ class JarvisOrb(QWidget):
     session_requested = Signal(str)
     hide_requested = Signal()
     exit_requested = Signal()
-    exit_requested = Signal()
 
     def __init__(self):
         super().__init__()

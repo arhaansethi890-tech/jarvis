@@ -45,6 +45,10 @@ class JarvisGUI:
         self.voice_enabled = True
         self.speech_module = None
         self.speaking = threading.Event()
+        self.speech_lock = threading.Lock()
+        self.recording_stop = threading.Event()
+        self.recording_active = False
+        self.jarvis.notify = self.notify_user
 
         # The orb and Tkinter UI share the main thread. Tk periodically pumps
         # Qt events, avoiding a second GUI thread and keeping orb state updates safe.
@@ -393,9 +397,12 @@ class JarvisGUI:
         self.listen_button.configure(
             state=(
                 "normal"
-                if mic_allowed and not self.busy
+                if mic_allowed and (not self.busy or self.recording_active)
                 else "disabled"
             )
+        )
+        self.listen_button.configure(
+            text="STOP" if self.recording_active else "SPEAK"
         )
 
         if not self.mic_enabled:
@@ -410,8 +417,11 @@ class JarvisGUI:
         self.input_status.configure(text=label)
 
     def toggle_microphone(self):
-        if self.busy:
+        if self.busy and not self.recording_active:
             return
+
+        if self.recording_active:
+            self.recording_stop.set()
 
         self.mic_enabled = not self.mic_enabled
 
@@ -462,25 +472,33 @@ class JarvisGUI:
 
     # ---------- MICROPHONE ----------
     def send_microphone(self):
+        if self.recording_active:
+            self.recording_stop.set()
+            self.listen_button.configure(text="PROCESSING...", state="disabled")
+            return
+
         if self.busy or not self.mic_enabled:
             return
 
         if self.mode.get() == "Keyboard Only":
             return
 
+        self.recording_stop.clear()
+        self.recording_active = True
         self.set_busy("LISTENING")
-        self.orb.request_session("Listening… speak now")
+        self.orb.request_session("Listening… press STOP when finished")
         self.add_message(
             "SYSTEM",
-            "Recording started. Speak when ready."
+            "Recording started. Press STOP when you're finished."
         )
 
         threading.Thread(
             target=self.capture_microphone,
+            args=(self.recording_stop,),
             daemon=True
         ).start()
 
-    def capture_microphone(self):
+    def capture_microphone(self, stop_event):
         try:
             if self.speech_module is None:
                 import speech
@@ -489,10 +507,13 @@ class JarvisGUI:
             if self.closing:
                 return
 
-            command = self.speech_module.listen()
+            command = self.speech_module.listen(stop_event)
+            self.recording_active = False
 
             if self.closing:
                 return
+
+            self.root.after(0, self.apply_mode)
 
             if not self.mic_enabled:
                 self.root.after(0, self.set_ready)
@@ -516,6 +537,7 @@ class JarvisGUI:
             self.process_command(command)
 
         except Exception as error:
+            self.recording_active = False
             if not self.closing:
                 self.root.after(
                     0, self.add_message,
@@ -558,7 +580,9 @@ class JarvisGUI:
             self.root.after(0, self.orb.request_overlay_text, response)
             self.root.after(0, self.orb.request_state, "Thinking")
 
-            self.speak_async(response)
+            # Keep the UI busy until speech finishes, so another response
+            # cannot compete for the shared audio player.
+            self.speak_if_enabled(response)
 
         except Exception as error:
             if not self.closing:
@@ -568,7 +592,17 @@ class JarvisGUI:
                 )
         finally:
             if not self.closing:
-                self.root.after(0, self.set_ready)
+                if self.jarvis.running:
+                    self.root.after(0, self.set_ready)
+                else:
+                    # Leave the farewell visible briefly after speech completes.
+                    self.root.after(
+                        0,
+                        lambda: self.status.configure(
+                            text="● SHUTTING DOWN", fg=YELLOW
+                        ),
+                    )
+                    self.root.after(1200, self.close_app)
 
     def speak_async(self, message):
         if not self.voice_enabled or self.closing:
@@ -581,23 +615,39 @@ class JarvisGUI:
         ).start()
 
     def speak_if_enabled(self, message):
-        # Check again immediately before speaking.
-        if not self.voice_enabled or self.closing:
-            return
+        with self.speech_lock:
+            # Check again after waiting for any earlier speech to finish.
+            if not self.voice_enabled or self.closing:
+                return
 
-        self.speaking.set()
-        self.orb.request_state("Speaking")
+            self.speaking.set()
+            self.orb.request_state("Speaking")
+            try:
+                speak(message)
+            except Exception as error:
+                print("Speech output error:", error)
+            finally:
+                self.speaking.clear()
+                if not self.closing:
+                    # If the AI worker has already finished, return to Idle now.
+                    # Otherwise set_ready() will return the orb to Idle afterwards.
+                    if not self.busy:
+                        self.orb.request_hide()
+
+    def notify_user(self, message):
+        """Forward timer notifications from worker threads to the GUI."""
+        if self.closing:
+            return
         try:
-            speak(message)
-        except Exception as error:
-            print("Speech output error:", error)
-        finally:
-            self.speaking.clear()
-            if not self.closing:
-                # If the AI worker has already finished, return to Idle now.
-                # Otherwise set_ready() will return the orb to Idle afterwards.
-                if not self.busy:
-                    self.orb.request_hide()
+            self.root.after(0, self._show_notification, message)
+        except tk.TclError:
+            pass
+
+    def _show_notification(self, message):
+        if self.closing:
+            return
+        self.add_message("JARVIS", message)
+        self.speak_async(message)
 
     # ---------- QT EVENT PUMP ----------
     def _pump_qt_events(self):

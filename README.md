@@ -11,13 +11,14 @@ JARVIS uses a locally running Ollama model for AI-powered responses and provides
 - **Local AI conversations** — Uses Ollama with the `qwen2.5:3b` model.
 - **Desktop interface** — A custom dark-themed Tkinter GUI.
 - **Voice interaction** — Microphone input and spoken responses.
+- **Variable-length recording** — Click **SPEAK**, then **STOP** when you're finished; recordings are capped at 60 seconds.
 - **Browser control** — Opens Brave when available, with a default-browser fallback.
 - **Web search** — Searches Google and YouTube.
 - **Website shortcuts** — Opens commonly used websites.
 - **Desktop automation** — Launches supported applications and opens common folders.
 - **Safe arithmetic** — Evaluates basic mathematical expressions using a restricted calculator.
 - **Security policy prototype** — A separate safeguards module defines allowed, approval-required, and blocked actions.
-- **Test scripts** — Includes scripts for checking the safeguards and voice-related functionality.
+- **Unit tests** — Checks the security policy and action classification.
 
 ## Tech Stack
 
@@ -25,6 +26,7 @@ JARVIS uses a locally running Ollama model for AI-powered responses and provides
 |---|---|
 | Python 3.10 | Core application |
 | Tkinter | Desktop GUI |
+| PySide6 | Animated orb interface |
 | Ollama | Local AI inference |
 | Qwen 2.5 3B | Language model |
 | Whisper | Speech recognition |
@@ -55,6 +57,10 @@ jarvis/
 - The required Python packages for speech recognition, audio playback, and text-to-speech
 - A microphone for voice input
 - An internet connection for web searches and online TTS services
+
+JARVIS records from the Windows default microphone. Click **SPEAK** to start
+recording and **STOP** to submit your command. The recording stops automatically
+after 60 seconds if you do not press **STOP**.
 
 ## Getting Started
 
@@ -104,6 +110,16 @@ Try commands such as:
 - `open Downloads`
 
 Available commands depend on the current implementation and installed applications.
+
+## Run the checks
+
+From the project directory, run:
+
+```powershell
+py -3.10 -m unittest discover -v
+```
+
+The security checks use Python's test runner, so failures produce a non-zero exit code.
 
 ## Security
 
