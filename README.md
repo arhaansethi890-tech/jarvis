@@ -11,7 +11,9 @@ JARVIS uses a locally running Ollama model for AI-powered responses and provides
 - **Local AI conversations** — Uses Ollama with the `qwen2.5:3b` model.
 - **Desktop interface** — A custom dark-themed Tkinter GUI.
 - **Voice interaction** — Microphone input and spoken responses.
-- **Variable-length recording** — Click **SPEAK**, then **STOP** when you're finished; recordings are capped at 60 seconds.
+- **Tray-first controls** — JARVIS starts in the system tray; open it from the tray or toggle the microphone there.
+- **On-demand orb** — The compact orb appears after “Hey Jarvis” and hides when the interaction ends.
+- **Low-resource wake word** — Uses Whisper `tiny.en` with one CPU thread and skips transcription when the microphone is quiet.
 - **Browser control** — Opens Brave when available, with a default-browser fallback.
 - **Web search** — Searches Google and YouTube.
 - **Website shortcuts** — Opens commonly used websites.
@@ -29,7 +31,7 @@ JARVIS uses a locally running Ollama model for AI-powered responses and provides
 | PySide6 | Animated orb interface |
 | Ollama | Local AI inference |
 | Qwen 2.5 3B | Language model |
-| Whisper | Speech recognition |
+| Whisper `tiny.en` | Low-resource English speech recognition |
 | Edge TTS | Text-to-speech |
 | Git and GitHub | Version control and project hosting |
 
@@ -58,9 +60,17 @@ jarvis/
 - A microphone for voice input
 - An internet connection for web searches and online TTS services
 
-JARVIS records from the Windows default microphone. Click **SPEAK** to start
-recording and **STOP** to submit your command. The recording stops automatically
-after 60 seconds if you do not press **STOP**.
+JARVIS starts minimized to the system tray and listens while **MIC ON** is enabled.
+Double-click the tray icon to open the main window; right-click it to hide the
+window, pause the microphone, toggle spoken replies, or exit. Closing the main
+window sends JARVIS back to the tray.
+
+JARVIS uses the Windows default microphone, falling back to a detected microphone
+array if needed. It adapts to background noise and boosts quiet speech locally.
+Say "Hey Jarvis" followed by a command, such as "Hey Jarvis, what time is it?"
+The compact orb appears during the interaction and hides when JARVIS is ready for
+the next wake word. The first microphone start downloads Whisper `tiny.en` if it
+is not already cached; later launches reuse it.
 
 ## Getting Started
 
@@ -88,13 +98,13 @@ Install the Python dependencies required by the project. The dependency list wil
 
 ### 3. Launch JARVIS
 
-From the project directory, run:
+Run the launcher from the project directory:
 
 ```powershell
-py -3.10 main.py
+.\run.bat
 ```
 
-The desktop interface should open if the required dependencies are installed.
+JARVIS starts in the system tray. Double-click its icon to open the window.
 
 ## Example Commands
 

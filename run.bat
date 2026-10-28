@@ -69,8 +69,13 @@ if errorlevel 1 (
 )
 
 :launch
-echo Launching JARVIS...
+echo Launching JARVIS in the system tray...
 echo.
+
+if exist ".venv\Scripts\pythonw.exe" (
+    start "" ".venv\Scripts\pythonw.exe" main.py
+    exit /b 0
+)
 
 ".venv\Scripts\python.exe" main.py
 set "EXIT_CODE=%errorlevel%"

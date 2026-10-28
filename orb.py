@@ -20,8 +20,8 @@ from PySide6.QtWidgets import QApplication, QLabel, QMenu, QWidget
 
 # ---------- SETTINGS ----------
 
-ORB_SIZE = 240
-FRAME_MS = 33                     # about 30 fps; lower CPU use than 16 ms
+ORB_SIZE = 168
+FRAME_MS = 50                     # 20 fps while the orb is visible
 EDGE_MARGIN = 40                  # distance from the screen's right edge
 BOTTOM_MARGIN = 60                # distance above the bottom of the work area
 DEFAULT_ANCHOR = "bottom_right"   # or "bottom_centre"
@@ -33,6 +33,12 @@ EASE = 0.08                       # how quickly size and spin move toward the ta
 
 # Ring rotation in degrees per phase unit. Negative values turn the other way.
 RING_SPEEDS = (6.0, -4.0)
+STATE_RING_SPEED = {
+    "Idle": 0.45,
+    "Listening": 1.35,
+    "Thinking": 2.15,
+    "Speaking": 0.82,
+}
 
 
 class JarvisOrb(QWidget):
@@ -89,19 +95,19 @@ class JarvisOrb(QWidget):
         self.particles = [
             (
                 rng.uniform(0, math.tau),
-                rng.uniform(65, 104),
+                rng.uniform(46, 72),
                 rng.uniform(0.5, 1.8),
                 rng.uniform(1.0, 2.6),
             )
-            for _ in range(48)
+            for _ in range(16)
         ]
 
         # Gradients that don't change are built once.
         self._glow = self._build_glow()
         self._rings = [
             # (radius, pen width, rotation speed, gradient)
-            (77, 3.0, RING_SPEEDS[0], self._build_ring_gradient()),
-            (91, 1.6, RING_SPEEDS[1], self._build_ring_gradient()),
+            (54, 2.4, RING_SPEEDS[0], self._build_ring_gradient()),
+            (66, 1.3, RING_SPEEDS[1], self._build_ring_gradient()),
         ]
         self._label_font = QFont("Consolas", 8)
 
@@ -114,7 +120,6 @@ class JarvisOrb(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.animate)
-        self.timer.start(FRAME_MS)
 
     # ---------- PUBLIC API ----------
 
@@ -140,6 +145,8 @@ class JarvisOrb(QWidget):
         """Show orb and text bubble for an active interaction."""
         self.set_state("Listening")
         self.set_overlay_text(message)
+        if not self.timer.isActive():
+            self.timer.start(FRAME_MS)
         self.show()
         self.raise_()
         self.bubble.show()
@@ -155,6 +162,7 @@ class JarvisOrb(QWidget):
         self.set_state("Idle")
         self.bubble.hide()
         self.hide()
+        self.timer.stop()
 
     def _position_bubble(self):
         if not hasattr(self, "bubble"):
@@ -169,7 +177,7 @@ class JarvisOrb(QWidget):
     # ---------- GRADIENTS ----------
 
     def _build_glow(self):
-        glow = QRadialGradient(self.cx, self.cy, 112)
+        glow = QRadialGradient(self.cx, self.cy, 78)
         glow.setColorAt(0.0, QColor(0, 180, 255, 34))
         glow.setColorAt(0.48, QColor(105, 35, 255, 18))
         glow.setColorAt(1.0, QColor(0, 0, 0, 0))
@@ -190,12 +198,14 @@ class JarvisOrb(QWidget):
     # ---------- ANIMATION ----------
 
     def animate(self):
+        if not self.isVisible():
+            self.timer.stop()
+            return
         self.motion += (STATE_MOTION[self.state] - self.motion) * EASE
         self.spin += (STATE_SPIN[self.state] - self.spin) * EASE
         self.phase = (self.phase + 0.025 * self.spin) % math.tau
-        if self.isVisible():
-            self._position_bubble()
-            self.update()
+        self._position_bubble()
+        self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -211,19 +221,18 @@ class JarvisOrb(QWidget):
             pulse = 0.09 * math.sin(t * 3.4)
         else:
             pulse = 0.018 * math.sin(t * 1.4)
-        radius = 53 * (1 + pulse) * self.motion
+        radius = 37 * (1 + pulse) * self.motion
 
         # Soft outer glow
         p.setBrush(QBrush(self._glow))
-        p.drawEllipse(int(self.cx - 112), int(self.cy - 112), 224, 224)
+        p.drawEllipse(int(self.cx - 78), int(self.cy - 78), 156, 156)
 
         # Rotating broken energy rings: translate once, then rotate the painter.
         p.save()
         p.translate(self.cx, self.cy)
+        state_speed = STATE_RING_SPEED[self.state]
         for ring_radius, width, speed, gradient in self._rings:
             p.save()
-            state_speed = {"Idle": 0.45, "Listening": 1.35,
-                           "Thinking": 2.15, "Speaking": 0.82}[self.state]
             p.rotate(math.degrees(t * speed * state_speed))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(QPen(QBrush(gradient), width))
@@ -270,7 +279,7 @@ class JarvisOrb(QWidget):
         p.setFont(self._label_font)
         p.setPen(QColor(195, 225, 255, 220))
         p.drawText(
-            0, ORB_SIZE - 29, ORB_SIZE, 20,
+            0, ORB_SIZE - 22, ORB_SIZE, 16,
             Qt.AlignmentFlag.AlignCenter,
             f"J.A.R.V.I.S.  \u2022  {self.state.upper()}",
         )
